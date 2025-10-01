@@ -1,0 +1,67 @@
+name: ETL nightly
+
+on:
+  schedule:
+    - cron: "0 18 * * *"     # 01:00 GMT+7 (18:00 UTC ngày trước)
+  workflow_dispatch: {}       # cho phép bấm chạy tay
+
+permissions:
+  contents: write             # cần quyền push
+
+jobs:
+  run-etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+
+      # (Tùy) Nếu bạn vẫn giữ code ingest từ ZIP => comment nếu không dùng
+      # - name: Ingest bronze from ZIP (optional)
+      #   run: |
+      #     python lake/ingest_from_zip.py
+
+      - name: Run ETL (silver → gold → kol)
+        run: |
+          python lake/transform_to_silver.py
+          python lake/build_gold.py
+          python lake/kol_build.py
+
+      - name: Prepare data branch content
+        run: |
+          mkdir -p publish/daily_metrics publish/kol_performance
+          cp -f data/lake/gold/daily_metrics/full.parquet publish/daily_metrics/full.parquet
+          cp -f data/lake/gold/kol_performance/full.parquet publish/kol_performance/full.parquet
+
+      - name: Push artifacts to data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # create/update branch 'data' with only publish/* files
+          git config user.name  "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          # switch to data branch (create if not exists)
+          if git ls-remote --exit-code --heads origin data; then
+            git checkout data
+          else
+            git checkout --orphan data
+          fi
+          # remove all tracked files, then add publish/
+          find . -maxdepth 1 -not -name '.' -not -name '.git' -not -name 'publish' -exec rm -rf {} +
+          mv publish/* ./
+          rm -rf publish
+          git add -A
+          git commit -m "nightly gold update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "no changes"
+          git push origin data --force

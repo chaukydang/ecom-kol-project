@@ -1,0 +1,5 @@
+data/raw/
+data/lake/bronze/
+data/lake/silver/
+*.zip
+**/__pycache__/
