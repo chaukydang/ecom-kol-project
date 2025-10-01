@@ -6,6 +6,48 @@ from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date, timedelta
+import os, io, requests  # <- thêm 3 import này
+
+# ====== GITHUB LOADER (đọc từ branch `data`) ======
+def _load_parquet_from_github(user: str, repo: str, branch: str, path_in_branch: str) -> pd.DataFrame:
+    url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{path_in_branch}"
+    r = requests.get(url, timeout=30)
+    r.raise_for_status()
+    bio = io.BytesIO(r.content)
+    return pd.read_parquet(bio)
+
+def load_data_with_fallback() -> tuple[pd.DataFrame, pd.DataFrame, str]:
+    """
+    Ưu tiên đọc GitHub (nhánh `data`), nếu không có thì fallback về local.
+    Trả về: (daily_df, kol_df, "github" | "local")
+    """
+    user   = os.getenv("GITHUB_USER")
+    repo   = os.getenv("GITHUB_REPO")
+    branch = os.getenv("GITHUB_DATA_BRANCH", "data")
+
+    # thử GitHub trước nếu có cấu hình env
+    if user and repo:
+        try:
+            d = _load_parquet_from_github(user, repo, branch, "daily_metrics/full.parquet")
+            k = _load_parquet_from_github(user, repo, branch, "kol_performance/full.parquet")
+            # chuẩn hoá datetime
+            if "date" in d.columns: d["date"] = pd.to_datetime(d["date"])
+            if "date" in k.columns: k["date"] = pd.to_datetime(k["date"])
+            return d.sort_values("date"), k.sort_values("date"), "github"
+        except Exception as e:
+            st.warning(f"Load from GitHub failed ({e}). Falling back to local files…")
+
+    # fallback local
+    DAILY_PATH = Path("data/lake/gold/daily_metrics/full.parquet")
+    KOL_PATH   = Path("data/lake/gold/kol_performance/full.parquet")
+    if DAILY_PATH.exists() and KOL_PATH.exists():
+        d = pd.read_parquet(DAILY_PATH);  k = pd.read_parquet(KOL_PATH)
+        if "date" in d.columns: d["date"] = pd.to_datetime(d["date"])
+        if "date" in k.columns: k["date"] = pd.to_datetime(k["date"])
+        return d.sort_values("date"), k.sort_values("date"), "local"
+
+    st.error("❌ No data found. Either configure GitHub env (GITHUB_USER/REPO/BRANCH) or generate local Gold parquet via pipeline.")
+    st.stop()
 
 # ============== PAGE CONFIG ==============
 st.set_page_config(
@@ -122,16 +164,9 @@ def quick_range_range(full_min, full_max, choice):
         return full_max.replace(month=1, day=1), full_max
     return full_min, full_max
 
-# ============== LOAD DATA ==============
-if not DAILY_PATH.exists() or not KOL_PATH.exists():
-    st.error("❌ Không tìm thấy dữ liệu Gold.\nHãy chạy pipeline:\n"
-             "1) ingest → 2) silver → 3) gold → 4) kol\n"
-             "và đảm bảo tồn tại:\n"
-             "`data/lake/gold/daily_metrics/full.parquet`, `data/lake/gold/kol_performance/full.parquet`")
-    st.stop()
-
-daily = load_df(DAILY_PATH).sort_values("date")
-kol   = load_df(KOL_PATH).sort_values("date")
+# ============== LOAD DATA (GitHub-first with local fallback) ==============
+daily, kol, source = load_data_with_fallback()
+st.caption(f"Data source: **{source}**")
 
 # ============== SIDEBAR: FILTERS & HELP ==============
 with st.sidebar:
