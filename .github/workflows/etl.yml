@@ -45,7 +45,7 @@ jobs:
           cp -f data/lake/gold/daily_metrics/full.parquet publish/daily_metrics/full.parquet
           cp -f data/lake/gold/kol_performance/full.parquet publish/kol_performance/full.parquet
 
-            - name: Push artifacts to data branch
+      - name: Push artifacts to data branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
