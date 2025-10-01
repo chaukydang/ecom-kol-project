@@ -45,23 +45,40 @@ jobs:
           cp -f data/lake/gold/daily_metrics/full.parquet publish/daily_metrics/full.parquet
           cp -f data/lake/gold/kol_performance/full.parquet publish/kol_performance/full.parquet
 
-      - name: Push artifacts to data branch
+            - name: Push artifacts to data branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # create/update branch 'data' with only publish/* files
+          set -euo pipefail
+
           git config user.name  "github-actions"
           git config user.email "actions@users.noreply.github.com"
-          # switch to data branch (create if not exists)
-          if git ls-remote --exit-code --heads origin data; then
-            git checkout data
+
+          # 1) Lấy branch data (nếu có trên remote) về local với ref đầy đủ
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch origin refs/heads/data:refs/heads/data
+            git checkout refs/heads/data
           else
+            # Chưa có → tạo orphan branch 'data' (không có lịch sử)
             git checkout --orphan data
           fi
-          # remove all tracked files, then add publish/
-          find . -maxdepth 1 -not -name '.' -not -name '.git' -not -name 'publish' -exec rm -rf {} +
-          mv publish/* ./
-          rm -rf publish
+
+          # 2) Xoá mọi thứ ở branch data hiện tại, CHỈ giữ thư mục publish/
+          # (Ở branch main, thư mục 'data/' sẽ không bị ảnh hưởng vì ta đang ở branch data)
+          find . -maxdepth 1 \
+            -not -name '.' \
+            -not -name '.git' \
+            -not -name 'publish' \
+            -exec rm -rf {} +
+
+          # 3) Di chuyển nội dung publish/* ra root (nếu có)
+          if [ -d publish ]; then
+            shopt -s nullglob dotglob
+            mv publish/* . 2>/dev/null || true
+            rm -rf publish
+          fi
+
+          # 4) Commit & force-push lên remote/branch data
           git add -A
           git commit -m "nightly gold update $(date -u +'%Y-%m-%dT%H:%M:%SZ')" || echo "no changes"
-          git push origin data --force
+          git push origin HEAD:refs/heads/data --force
