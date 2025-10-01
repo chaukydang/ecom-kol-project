@@ -1,5 +1,5 @@
 data/raw/
-data/lake/bronze/
-data/lake/silver/
+data/raw_master/
 *.zip
+*.csv
 **/__pycache__/
